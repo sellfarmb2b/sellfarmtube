@@ -5,32 +5,97 @@ import csv
 from datetime import datetime, timedelta
 
 # 1. 페이지 기본 설정
-st.set_page_config(page_title="수강생 전용 24시간 톡", page_icon="🎓")
+st.set_page_config(page_title="유튜브 컨설팅 봇", page_icon="🎓")
 
-# --- [설정] ---
+# --- [경로 설정] ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 data_folder_path = os.path.join(current_dir, "data")
 log_file_path = os.path.join(current_dir, "chat_logs.csv")
 
-# --- [기능: 대화 내용 저장] ---
-# 로그인은 없지만, '익명_게스트'라는 이름으로 질문 내용은 계속 기록됩니다.
-def save_log(user_id, question, answer):
+# --- [기능 1: 대화 내용 저장] ---
+def save_log(user_phone, question, answer):
     kst_now = datetime.utcnow() + timedelta(hours=9)
     timestamp = kst_now.strftime("%Y-%m-%d %H:%M:%S")
     file_exists = os.path.exists(log_file_path)
     with open(log_file_path, "a", newline='', encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         if not file_exists:
-            writer.writerow(["시간", "사용자", "질문 내용", "AI 답변"])
-        writer.writerow([timestamp, user_id, question, answer])
+            writer.writerow(["시간", "전화번호", "질문 내용", "AI 답변"])
+        writer.writerow([timestamp, user_phone, question, answer])
 
-# --- [메인 화면] ---
-st.title("🎓 유튜브 컨설팅 봇 (임시 오픈)")
-st.caption("로그인 없이 자유롭게 이용 가능한 임시 버전입니다.")
+# --- [기능 2: 전화번호로 과거 기록 불러오기] ---
+def load_chat_history(user_phone):
+    history = []
+    if not os.path.exists(log_file_path):
+        return history
+    try:
+        with open(log_file_path, "r", encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                # 저장된 번호와 입력한 번호가 같으면 가져오기
+                if row.get("전화번호") == user_phone:
+                    history.append({"role": "user", "content": row.get("질문 내용")})
+                    history.append({"role": "assistant", "content": row.get("AI 답변")})
+    except:
+        pass
+    return history
 
-# 사용자 ID를 '익명'으로 고정
-if "user_id" not in st.session_state:
-    st.session_state["user_id"] = "익명_게스트"
+# --- [입장 화면: 전화번호 입력] ---
+if "user_phone" not in st.session_state:
+    st.session_state["user_phone"] = None
+
+if not st.session_state["user_phone"]:
+    st.markdown("## 🎓 유튜브 컨설팅 봇")
+    st.write("이전 대화 내용을 불러오기 위해 **휴대폰 번호**를 입력해주세요.")
+    st.caption("※ 별도의 회원가입 절차 없이 바로 시작됩니다.")
+    
+    phone_input = st.text_input("휴대폰 번호 (예: 010-1234-5678)", placeholder="010-XXXX-XXXX")
+    
+    if st.button("입장하기"):
+        if len(phone_input) >= 4: # 최소 4자리 이상 입력 확인
+            clean_phone = phone_input.strip() # 공백 제거
+            st.session_state["user_phone"] = clean_phone
+            
+            # 과거 기록 불러오기
+            st.session_state.messages = load_chat_history(clean_phone)
+            st.rerun()
+        else:
+            st.warning("전화번호를 정확히 입력해주세요.")
+    st.stop()
+
+# --- [사이드바: 내 기록 관리] ---
+with st.sidebar:
+    st.header(f"📱 {st.session_state['user_phone']}님")
+    st.caption("재접속 시 같은 번호를 입력하면 대화가 이어집니다.")
+    
+    # 내 대화 다운로드
+    if os.path.exists(log_file_path):
+        my_logs = []
+        with open(log_file_path, "r", encoding="utf-8-sig") as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) > 1 and row[1] == st.session_state['user_phone']:
+                    my_logs.append(row)
+        
+        if my_logs:
+            my_csv_content = "시간,전화번호,질문 내용,AI 답변\n"
+            for log in my_logs:
+                my_csv_content += ",".join([f'"{x}"' for x in log]) + "\n"
+
+            st.download_button(
+                label="💾 내 대화 기록 다운로드",
+                data=my_csv_content.encode('utf-8-sig'),
+                file_name=f"chat_{st.session_state['user_phone']}.csv",
+                mime="text/csv"
+            )
+            
+    if st.button("나가기 (로그아웃)"):
+        st.session_state["user_phone"] = None
+        st.session_state.messages = []
+        st.rerun()
+
+# --- [메인 채팅 기능] ---
+st.title(f"🎓 유튜브 컨설팅")
 
 # API 키 설정
 try:
@@ -96,8 +161,8 @@ if prompt := st.chat_input("질문을 입력하세요..."):
                 st.markdown(response.text)
                 st.session_state.messages.append({"role": "assistant", "content": response.text})
                 
-                # 익명으로 대화 내용 저장
-                save_log(st.session_state["user_id"], prompt, response.text)
+                # 전화번호와 함께 저장
+                save_log(st.session_state["user_phone"], prompt, response.text)
                 
             except Exception as e:
                 st.error(f"오류: {e}")
